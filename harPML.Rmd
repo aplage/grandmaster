@@ -1,0 +1,246 @@
+---
+title: "Human Activity Recognition: predicting models for Weight Lifting Exercise"
+author: "Andrey Pereira Lage"
+date: "March 27, 2016"
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+#Summary
+
+This project on Human Activity Recognition was performed as the final assignment of the **Practical Machine Learning** course of the **Data Science** Specialization of **Johns Hopkins Bloomberg School of Public Health / Coursera**. The goal of the project was to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+
+#Data reading and processing
+
+The data was read from .csv file as **training** ("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv") and **test** ("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv") datasets. 
+
+
+```{r, echo=FALSE}
+setwd("F:/vindo Apple/PML/Project")
+
+suppressPackageStartupMessages(suppressWarnings(require(caret)))
+suppressPackageStartupMessages(suppressWarnings(require(corrgram)))
+suppressPackageStartupMessages(suppressWarnings(require(randomForest)))
+suppressPackageStartupMessages(suppressWarnings(require(gbm)))
+suppressPackageStartupMessages(suppressWarnings(require(MASS)))
+
+#trainurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+#testurl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+#training <- read.csv(trainurl)
+#test <- read.csv(testurl)
+
+training <- read.csv("pml-training.csv")
+test <- read.csv("pml-testing.csv")
+```
+
+The dimensions of datasets were:
+```{r}
+dim(training)
+dim(test)
+```
+
+Then, the **training** dataset was evaluated for near zero variables that were removed from the dataset, creating the **training2** dataset with the following dimensions:
+```{r}
+nzvindex <- nearZeroVar(training, saveMetrics=TRUE)
+training2 <- training[,nzvindex$nzv==FALSE]
+dim(training2)
+```
+
+In the next step, variables with more than 60% of NA were also removed and a new dataset were created, **training3**.
+```{r}
+removeNA <- vector()
+for(i in 1:length(names(training2))){
+        if(sum(is.na(training2[,i]))/length(training2[,i]) >= 0.6){
+                NAremove <- i
+                removeNA <- c(removeNA, NAremove)
+        }
+        
+}
+training3 <- training2[,-removeNA]
+```
+
+The dimensions of **training3** dataset were:
+```{r}
+dim(training3)
+```
+
+
+The first variable, that seems to be just an ordered number or id, was also removed and the dataset was stored as **training4**.
+
+```{r, echo = FALSE}
+training4 <- training3[,-1]
+```
+
+In the next step, the correlation among variables in **training4** was evaluated and the number and percentage of variables with correlation greater than 80% were recorded.
+
+```{r}
+cortraining4 <- abs(cor(training4[,-c(1,4,58)]))
+diag(cortraining4) <- 0
+length(which(cortraining4 > 0.8, arr.ind = T))/2
+paste("Percentage of correlated variables =",
+      round((length(which(cortraining4 > 0.8, arr.ind = T))/2)*100/ dim(training4)[2], 2), 
+        "%", 
+        sep = " ")
+```
+
+Those results indicate that there is a large amont of correlation among the variables in **training4** dataset. Thus, to control for this large ammount of correlation and decrease the number of variables, **principal component analysis** was used in all preprocessing of the dataset.
+
+The **training4** dataset was then divided in **training5** (70%) and **testing** (30%) datasets.
+
+```{r}
+set.seed(54321)
+inTrain <- createDataPartition(training4$classe,
+                               p = 0.70, 
+                               list = FALSE)
+
+training5 <- training4[inTrain,]
+testing <- training4[-inTrain,]
+```
+
+##Scatterplot matrix of all 58 variables in **training5** dataset
+```{r, message = FALSE, warning = FALSE}
+suppressWarnings(splom(training5, panel = panel.smoothScatter, raster = TRUE))
+```
+
+#Evaluation of the models for **Classe** prediction in HAR dataset
+
+For all analysis, the **training5** dataset was splitted into 5-fold subdatasets for cross-validation.
+
+```{r}
+set.seed(54321)
+fitmodelcontrol <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+```
+
+Due to the characteristics of the data, three different algoritms were selected to be tested: **Random Forest**, **Generalized Boosted Regression** and **Linear Discriminant Analysis**
+```{r}
+set.seed(54321)
+suppressPackageStartupMessages(suppressWarnings(
+        fitrf <- train(classe ~ ., 
+               "rf",
+               preProcess="pca", 
+               trControl = fitmodelcontrol, 
+               data = training5)))
+suppressPackageStartupMessages(suppressWarnings(
+        fitgbm <- train(classe ~ ., 
+                "gbm", 
+                verbose = FALSE, 
+                preProcess="pca", 
+                trControl = fitmodelcontrol, 
+                data = training5)))
+suppressPackageStartupMessages(suppressWarnings(
+        fitlda <- train(classe ~ .,
+                "lda", 
+                preProcess="pca", 
+                trControl = fitmodelcontrol, 
+                data = training5)))
+```
+
+The models were fitted with the **testing** dataset.
+
+```{r}
+set.seed(54321)
+predrf <- predict(fitrf, testing)
+predgbm <- predict(fitgbm, testing)
+predlda <- predict(fitlda, testing)
+```
+
+
+A new dataset, **testnew**, was created from the predicted values of the former models and **classe** (**classetr** in **testnew**).
+```{r}
+classets <- testing$classe
+testnew <- data.frame(predrf, predgbm, predlda, classets)
+```
+
+A new **Random Forest** model was fitted with the **testnew** dataset, which has the predicted values of the former models, and stored in **fit123**.
+
+```{r}
+set.seed(54321)
+fit123 <- train(classets ~., method = "rf", data = testnew)
+```
+
+The **fit123** model was then predicit with the **testing** dataset.
+```{r}
+set.seed(54321)
+preda123 <- predict(fit123, testing)
+```
+
+The following plots show the results of the prediction using all models.
+
+```{r}
+par(mfrow = c(2,2))
+plot(predrf, testing$classe, 
+     main = "Predicition with Random Forrest model",
+     ylab = "Model Predicited values",
+     xlab = "Original Classe values")
+
+plot(predgbm, testing$classe, 
+     main = "Predicition with Generalized Boosted Regression model",
+     ylab = "Model Predicited values",
+     xlab = "Original Classe values")
+
+plot(predlda, testing$classe, 
+     main = "Predicition with Linear Discriminant Analysis model",
+     ylab = "Model Predicited values",
+     xlab = "Original Classe values")
+
+plot(preda123, testing$classe, 
+     main = "Predicition with Random Forrest model
+     on the combination of former models",
+     ylab = "Model Predicited values",
+     xlab = "Original Classe values")
+par(mfrow = c(1,1))
+```
+
+
+Confusion matrix were created for all individual models and for the **fit123** model with the predicted values from the former models.
+
+```{r}
+set.seed(54321)
+accrf <- confusionMatrix(predrf, testing$classe)
+accgbm <- confusionMatrix(predgbm, testing$classe)
+acclda <- confusionMatrix(predlda, testing$classe)
+acc123 <- confusionMatrix(preda123, testing$classe)
+
+accrf
+accgbm
+acclda
+acc123
+```
+
+The summary of the accuracy of all four models is shown in the next table.
+
+```{r}
+resa <- rbind(accrf$overall[1], accgbm$overall[1], acclda$overall[1], acc123$overall[1])
+rownames(resa) <- c("RF", "GBM", "LDA", "All")
+resa
+```
+
+As the Random Forest model **fitrf** and the Random Forest model using all three former models **fit123** showed similar performance, due to its lesser complexity, the **fitrf** model was selected for futher analysis.
+
+```{r}
+plot(fitrf, main = "Accuracy of the random forest model fitrf")
+```
+
+The expected out of sample error was estimated as (1 - the accuracy of the selected **fitrf** in the **testing** dataset). As the **testing** dataset was only used to evaluate the model after fitting, the expected out of sample error of `r paste0((round((1-accrf$overall[1]),4)[[1]]*100),"%")` is a very good estimate.
+
+#Reference
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+
+#Using the **fitrf** model to predict outcome in **test** dataset.
+
+The **fitrf** model was used to predict the outcome in the **test** dataset as follows:
+
+```{r}
+predsubmission <- predict(fitrf, test)
+predsubmission
+```
+
+
+
+
+
